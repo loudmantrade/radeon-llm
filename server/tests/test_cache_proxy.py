@@ -7,10 +7,11 @@ import sys
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from cache_proxy import Proxy
+from cache_proxy import Proxy, CacheHTTPServer
 
 
 class FakeCache:
@@ -103,6 +104,14 @@ class ProxyTests(unittest.TestCase):
         while self.cache.invalidations<2 and time.monotonic()<deadline:
             time.sleep(.01)
         self.assertEqual(self.cache.invalidations,2)
+
+    def test_loopback_start_does_not_depend_on_reverse_dns(self):
+        with patch('socket.getfqdn', side_effect=AssertionError('DNS unavailable')):
+            server=CacheHTTPServer(('127.0.0.1',0),BaseHTTPRequestHandler)
+            try:
+                self.assertGreater(server.server_port,0)
+            finally:
+                server.server_close()
 
 
 if __name__=='__main__': unittest.main()

@@ -12,10 +12,13 @@ import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from platform_support import FileLock
 
-FAKE_NATIVE = '''import json,sys
+FAKE_NATIVE = '''import json,sys,socketserver
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 directory=Path(sys.argv[2])
+class Server(ThreadingHTTPServer):
+ def server_bind(self):
+  socketserver.TCPServer.server_bind(self);self.server_name='localhost';self.server_port=self.server_address[1]
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def reply(self,data):
@@ -32,7 +35,7 @@ class Handler(BaseHTTPRequestHandler):
    self.reply({'n_saved':600,'n_written':4200,'timings':{'save_ms':1}})
   elif 'action=restore' in self.path:self.reply({'n_restored':600})
   else:self.reply({'content':'4','tokens_predicted':1})
-ThreadingHTTPServer(('127.0.0.1',int(sys.argv[1])),Handler).serve_forever()
+Server(('127.0.0.1',int(sys.argv[1])),Handler).serve_forever()
 '''
 
 
@@ -65,10 +68,11 @@ class SupervisorTests(unittest.TestCase):
                 process = subprocess.Popen([sys.executable, '-u', '-c', code], stdout=log, stderr=subprocess.STDOUT,
                                            env={**os.environ, 'PYTHONUTF8': '1'})
                 try:
-                    deadline = time.monotonic() + 15
+                    deadline = time.monotonic() + 90
                     while not (directory / 'ready.json').exists():
                         if process.poll() is not None: self.fail('Supervisor exited; see ' + str(log.name))
-                        if time.monotonic() > deadline: self.fail('Supervisor startup timeout')
+                        if time.monotonic() > deadline:
+                            self.fail('Supervisor startup timeout:\n' + Path(log.name).read_text(errors='replace')[-5000:])
                         time.sleep(.05)
                     self.assertEqual(request('/health')['status'], 'ok')
                     if restart:

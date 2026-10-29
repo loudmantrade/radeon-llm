@@ -8,6 +8,7 @@ from pathlib import Path
 import signal
 import sys
 import socket
+import socketserver
 import sqlite3
 import subprocess
 import threading
@@ -23,6 +24,12 @@ HOP_HEADERS = {'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authoriz
 class CacheHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    def server_bind(self):
+        # Loopback API never needs a reverse DNS lookup during startup.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = 'localhost'
+        self.server_port = self.server_address[1]
 
 
 class Proxy:
