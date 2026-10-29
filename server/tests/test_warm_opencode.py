@@ -7,9 +7,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from warm_opencode import extract, warm, wait_saved, verify, private_json
 from cache_index import packed
 import hashlib
+import os
+from warm_opencode import matches_project
 
 
 class WarmPrefixTests(unittest.TestCase):
+    def test_capture_accepts_native_path_spelling_and_rejects_other_project(self):
+        project = Path.cwd() / 'Project with spaces'
+        reported = os.path.normcase(str(project)).replace(os.sep, '/')
+        self.assertTrue(matches_project('Working directory: ' + reported + '\r\n', project))
+        self.assertFalse(matches_project('Working directory: ' + reported + '/other\n', project))
+
     def test_plan_reminder_is_static_but_user_question_is_excluded(self):
         marker = 'UNIQUE_USER_QUESTION'
         prefix = 's' * 600 + 'plan reminder: user>'

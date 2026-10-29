@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -49,6 +50,13 @@ class API:
 
     def tokens(self, text):
         return self('/tokenize', {'content': text, 'add_special': True, 'parse_special': True})['tokens']
+
+
+def matches_project(system, project):
+    # OpenCode can print forward slashes and different drive-letter case on Windows.
+    expected = os.path.normcase(os.path.normpath(str(project)))
+    reported = re.findall(r'^\s*Working directory: ([^\r\n]+)', system, re.M)
+    return any(os.path.normcase(os.path.normpath(value)) == expected for value in reported)
 
 
 def capture(binary, project, config, agents):
@@ -114,7 +122,8 @@ def capture(binary, project, config, agents):
                 before = len(captures)
                 run = subprocess.run([str(binary), 'run', '--standalone', '--agent', agent,
                     '--model', 'radeon/qwen3-4b-local', '--format', 'json', '--title', 'Prefix capture', marker],
-                    cwd=project, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+                    cwd=project, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                    encoding='utf-8', errors='replace', timeout=120)
                 matching = [b for b in captures[before:] if marker in json.dumps(b.get('messages', []))]
                 if run.returncode or len(matching) != 1:
                     # Do not print bodies, credentials, or arbitrary CLI diagnostic output.
@@ -122,7 +131,7 @@ def capture(binary, project, config, agents):
                                        (agent, run.returncode, len(matching)))
                 system = '\n'.join(str(m.get('content', '')) for m in matching[0].get('messages', [])
                                    if m.get('role') == 'system')
-                if 'Working directory: ' + str(project) + '\n' not in system:
+                if not matches_project(system, project):
                     raise RuntimeError('OpenCode reported a different working directory for ' + agent)
                 result[agent] = matching[0]
                 private_json(WORK / ('last-capture-' + agent + '.json'), matching[0])
