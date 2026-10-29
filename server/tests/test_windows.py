@@ -76,5 +76,13 @@ class WindowsTests(unittest.TestCase):
         self.assertEqual(body['providers']['radeon']['models']['qwen3-4b-local']['limit']['context'], 8192)
         self.assertNotIn((self.runtime / 'api-key').read_text(), path.read_text())
 
+    def test_background_startup_failure_is_saved_before_stderr_is_detached(self):
+        with patch.object(windows, 'WINDOWS', True), \
+             patch.object(sys, 'argv', ['windows.py', 'run', '--runtime', str(self.runtime), '--background']), \
+             patch.object(windows, 'run', side_effect=RuntimeError('GPU unavailable')):
+            with self.assertRaisesRegex(RuntimeError, 'GPU unavailable'):
+                windows.main()
+        self.assertIn('GPU unavailable', (self.runtime / 'logs/server.log').read_text(encoding='utf-8'))
+
 
 if __name__ == '__main__': unittest.main()

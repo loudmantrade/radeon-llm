@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 
 from platform_support import FileLock, WINDOWS
 from slot_cache import identity
@@ -225,7 +226,13 @@ def main():
         if opts.background:
             with (runtime / 'logs/server.log').open('a', encoding='utf-8', buffering=1) as log, \
                     contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
-                return run(config, runtime, opts.cpu)
+                try:
+                    return run(config, runtime, opts.cpu)
+                except BaseException:
+                    # Scheduled tasks and CREATE_NO_WINDOW have no usable stderr
+                    # after leaving this context. Preserve startup failures here.
+                    traceback.print_exc()
+                    raise
         return run(config, runtime, opts.cpu)
     control = opts.action not in ('opencode', 'check-api', 'warm', 'status', 'logs')
     with FileLock(runtime / 'manager.lock') if control else contextlib.nullcontext():
