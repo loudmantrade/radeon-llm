@@ -1,0 +1,179 @@
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 33936ac..875b946 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -1197,6 +1197,16 @@ void ggml_vk_wait_events(vk_context& ctx, std::vector<vk::Event>&& events) {
+     );
+ }
+ 
++static bool ggml_vk_amd_moltenvk_shared_fa_enabled(const vk_device& device) {
++#ifdef __APPLE__
++    const char * enabled = getenv("GGML_VK_AMD_MOLTENVK_FA_SHARED");
++    return device->vendor_id == VK_VENDOR_ID_AMD && enabled != nullptr && strcmp(enabled, "1") == 0;
++#else
++    GGML_UNUSED(device);
++    return false;
++#endif
++}
++
+ static vk_fa_tuning_params get_fa_tuning_params_scalar(const vk_device& device, uint32_t hsk, uint32_t hsv, uint32_t n_rows, uint32_t n_kv, ggml_type k_type, ggml_type v_type, bool f32acc) {
+ 
+     vk_fa_tuning_params result{};
+@@ -1212,6 +1222,10 @@ static vk_fa_tuning_params get_fa_tuning_params_scalar(const vk_device& device,
+         result.subgroup_size = device->subgroup_size;
+     }
+ 
++    if (ggml_vk_amd_moltenvk_shared_fa_enabled(device)) {
++        result.disable_subgroups = true;
++    }
++
+     // Row split splits the workgroup so that synchronization only has to happen within subgroups, which avoids barriers
+     uint32_t row_split_max_hsk = 64;
+     if (device->vendor_id == VK_VENDOR_ID_AMD && device->architecture != AMD_GCN && !device->uma) {
+@@ -4259,6 +4273,9 @@ vk_device ggml_vk_get_device(size_t idx) {
+ #ifdef __APPLE__
+         if (device->vendor_id == VK_VENDOR_ID_AMD) {
+             device->subgroup_shuffle = false;
++            if (ggml_vk_amd_moltenvk_shared_fa_enabled(device)) {
++                GGML_LOG_WARN("ggml_vulkan: experimental AMD MoltenVK shared FA only = 1; other shuffle disabled\n");
++            }
+         }
+ #endif
+         device->subgroup_clustered = (vk11_props.subgroupSupportedStages & vk::ShaderStageFlagBits::eCompute) &&
+@@ -15678,7 +15695,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
+                 if ((op->src[1]->type == GGML_TYPE_BF16) != (op->src[2]->type == GGML_TYPE_BF16)) {
+                     return false;
+                 }
+-                if (!coopmat2 && !(device->subgroup_shuffle && device->subgroup_vote)) {
++                if (!coopmat2 && !ggml_vk_amd_moltenvk_shared_fa_enabled(device) && !(device->subgroup_shuffle && device->subgroup_vote)) {
+                     // scalar/coopmat1 FA uses subgroupShuffle/subgroupAll
+                     return false;
+                 }
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 4ab280a..f48c2d8 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -8,6 +8,7 @@
+ #include <algorithm>
+ #include <cassert>
+ #include <cmath>
++#include <cstdlib>
+ #include <cstring>
+ #include <limits>
+ #include <map>
+@@ -1542,14 +1543,18 @@ void llama_kv_cache::set_input_v_idxs(ggml_tensor * dst, const llama_ubatch * ub
+ 
+ void llama_kv_cache::set_input_k_shift(ggml_tensor * dst) const {
+     GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
++    GGML_ASSERT(dst->ne[0] % n_stream == 0);
++
++    const uint32_t n_cells = dst->ne[0] / n_stream;
++    GGML_ASSERT(n_cells <= get_size());
+ 
+     int32_t * data = (int32_t *) dst->data;
+ 
+     for (uint32_t s = 0; s < n_stream; ++s) {
+         const auto & cells = v_cells[s];
+ 
+-        for (uint32_t i = 0; i < cells.size(); ++i) {
+-            data[s*cells.size() + i] = cells.is_empty(i) ? 0 : cells.get_shift(i);
++        for (uint32_t i = 0; i < n_cells; ++i) {
++            data[s*n_cells + i] = cells.is_empty(i) ? 0 : cells.get_shift(i);
+         }
+     }
+ }
+@@ -2028,7 +2033,16 @@ ggml_cgraph * llama_kv_cache::build_graph_shift(llm_graph_result * res, llama_co
+ 
+     auto inp = std::make_unique<llm_graph_input_k_shift>(this);
+ 
+-    inp->k_shift = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t) get_size()*n_stream);
++    uint32_t n_cells = get_size();
++    const char * active_only = std::getenv("LLAMA_KV_SHIFT_ACTIVE_ONLY");
++    if (n_stream == 1 && active_only && std::strcmp(active_only, "1") == 0) {
++        // Include holes before the last used physical cell, not only logical positions.
++        n_cells = std::max<uint32_t>(1, v_cells[0].used_max_p1());
++        GGML_ASSERT(n_cells <= get_size());
++        LLAMA_LOG_INFO("%s: active-only K-shift, cells = %u / %u\n", __func__, n_cells, get_size());
++    }
++
++    inp->k_shift = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t) n_cells*n_stream);
+     ggml_set_input(inp->k_shift);
+ 
+     inp->k_rot = build_input_k_rot(ctx);
+@@ -2056,7 +2070,7 @@ ggml_cgraph * llama_kv_cache::build_graph_shift(llm_graph_result * res, llama_co
+ 
+         ggml_tensor * k =
+             ggml_view_3d(ctx, layer.k,
+-                n_rot, n_head_kv, get_size()*n_stream,
++                n_rot, n_head_kv, (int64_t) n_cells*n_stream,
+                 ggml_row_size(layer.k->type, n_embd_head_k),
+                 ggml_row_size(layer.k->type, n_embd_k_gqa),
+                 ggml_row_size(layer.k->type, n_embd_nope));
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index fe3a67c..84b1cd2 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -8727,6 +8727,35 @@ struct test_flash_attn_ext : public test_case {
+     }
+ };
+ 
++struct test_flash_attn_ext_causal : public test_flash_attn_ext {
++    const int64_t n_past;
++
++    test_flash_attn_ext_causal(int64_t kv, int64_t nb, int64_t n_past)
++        : test_flash_attn_ext(128, 128, 8, {4, 1}, kv, nb, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0),
++          n_past(n_past) {}
++
++    std::string vars() override {
++        return test_flash_attn_ext::vars() + "," + VARS_TO_STR1(n_past);
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        test_flash_attn_ext::initialize_tensors(ctx);
++        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
++            if (strcmp(t->name, "m") != 0) {
++                continue;
++            }
++            GGML_ASSERT(ggml_is_contiguous(t) && ggml_nelements(t) == kv*nb);
++            std::vector<ggml_fp16_t> data(kv*nb);
++            for (int64_t row = 0; row < nb; ++row) {
++                for (int64_t col = 0; col < kv; ++col) {
++                    data[row*kv + col] = ggml_fp32_to_fp16(col <= n_past + row ? 0.0f : -INFINITY);
++                }
++            }
++            ggml_backend_tensor_set(t, data.data(), 0, data.size()*sizeof(ggml_fp16_t));
++        }
++    }
++};
++
+ // large Q values, so the online softmax has to rescale the partial results
+ struct test_flash_attn_ext_large_logits : public test_flash_attn_ext {
+     static constexpr int q_range = 20;
+@@ -12050,6 +12079,27 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
+ 
++    // Qwen3 GQA with quantized KV, including long-context decode.
++    for (int kv : { 128, 1024, 8192, 16384 }) {
++        test_cases.emplace_back(new test_flash_attn_ext(128, 128, 8, {4, 1}, kv, 1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0));
++    }
++    test_cases.emplace_back(new test_flash_attn_ext(128, 128, 8, {4, 1}, 8192, 128, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0));
++
++    // Short prompts and partial prefill tiles in the Qwen3 KV cache.
++    for (int nb : { 1, 2, 3, 7, 21, 31, 32, 64, 128 }) {
++        test_cases.emplace_back(new test_flash_attn_ext(128, 128, 8, {4, 1}, 256, nb, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0));
++    }
++    for (int nb : { 3, 7, 21 }) {
++        test_cases.emplace_back(new test_flash_attn_ext(128, 128, 8, {4, 1}, 1024, nb, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0));
++    }
++    for (int nb : { 1, 2, 3, 7, 21, 31, 32, 64, 128 }) {
++        test_cases.emplace_back(new test_flash_attn_ext_causal(256, nb, 0));
++    }
++    for (int kv : { 1024, 8192, 16384 }) {
++        test_cases.emplace_back(new test_flash_attn_ext_causal(kv, 1, kv - 21));
++    }
++    test_cases.emplace_back(new test_flash_attn_ext_causal(256, 1, 21));
++
+     // prefill-shaped cases with long KV (nb >= 32, kv >= 1024): covers the
+     // XMX/GEMM-accelerated SYCL FA path which only activates for these shapes.
+     for (int kv : { 1024, 2048, }) {

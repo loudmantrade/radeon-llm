@@ -1,0 +1,10 @@
+{
+  "repository": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+  "revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+  "file": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+  "bytes": 2497281120,
+  "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+  "original_model": "https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507",
+  "license": "Apache-2.0",
+  "context_for_this_project": 2048
+}

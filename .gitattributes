@@ -1,0 +1,7 @@
+* text=auto
+*.py text eol=lf
+*.command text eol=lf
+*.ps1 text eol=crlf
+*.patch text eol=lf -whitespace
+*.json text eol=lf
+*.yml text eol=lf

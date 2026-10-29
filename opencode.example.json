@@ -1,0 +1,101 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "radeon/qwen3-4b-local",
+  "small_model": "radeon/qwen3-4b-local",
+  "providers": {
+    "radeon": {
+      "name": "Radeon Qwen3 (local)",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "http://127.0.0.1:8080/v1",
+        "apiKey": "{file:server/api-key}",
+        "timeout": 2400000
+      },
+      "models": {
+        "qwen3-4b-local": {
+          "modelID": "qwen3-4b-local",
+          "name": "Qwen3 4B Instruct / Radeon",
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 16384,
+            "output": 1024
+          },
+          "body": {
+            "temperature": 0.2
+          }
+        }
+      }
+    }
+  },
+  "compaction": {
+    "auto": true,
+    "buffer": 1536,
+    "keep": {
+      "tokens": 1024
+    }
+  },
+  "default_agent": "radeon",
+  "agents": {
+    "radeon": {
+      "mode": "primary",
+      "description": "Compact coding agent for the local Radeon model",
+      "model": "radeon/qwen3-4b-local",
+      "system": "You are a concise coding assistant working in the current repository. Follow project instructions. Inspect only files relevant to the task, make focused edits, and run relevant checks. Use glob and grep to find code before reading it. Read at most 80 lines at a time; request more only when needed. Limit shell output to the relevant lines. Never dump whole directories, large files, lockfiles or generated files into the conversation. Work on one small task at a time. Keep replies brief and match the user language. Before unrelated or destructive changes, ask the user. Report what changed and what was tested. If essential information is missing, ask one concise question.",
+      "permissions": [
+        {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "webfetch",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "websearch",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "skill",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "question",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "todowrite",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "todoread",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "plan_enter",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "plan_exit",
+          "resource": "*",
+          "effect": "deny"
+        }
+      ]
+    }
+  }
+}
