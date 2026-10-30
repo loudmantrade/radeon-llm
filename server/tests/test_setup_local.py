@@ -117,6 +117,10 @@ class SetupTests(unittest.TestCase):
             root=Path(name);runtime=root/'runtime';runtime.mkdir()
             config={'model':'models/model.gguf','port':8080,'alias':'custom-model','context':8192}
             (runtime/'config.json').write_text(json.dumps(config))
+            (root/'models').mkdir();(root/'models/model.gguf').write_bytes(b'model')
+            (root/'models/qwen3-source.json').write_text(json.dumps({'file':'model.gguf'}))
+            binary=root/'llama.cpp/build-setup-vulkan/bin/Release';binary.mkdir(parents=True)
+            (binary/'llama-server.exe').write_bytes(b'native');(binary/'ggml.dll').write_bytes(b'library')
             windows=SimpleNamespace(DEFAULT_RUNTIME=runtime,configure=Mock(return_value=dict(config)),
                 binary_path=Mock(return_value=root/'llama-server.exe'),opencode_config=Mock())
             with patch.dict(sys.modules,{'windows':windows}),patch.object(setup,'ROOT',root), \
@@ -126,6 +130,10 @@ class SetupTests(unittest.TestCase):
             saved=json.loads((runtime/'config.json').read_text())
             self.assertTrue(Path(saved['model']).is_absolute())
             self.assertEqual(saved['context'],8192)
+            self.assertEqual(invoke.call_args_list[0].args[0][2],'stop')
+            self.assertEqual(invoke.call_args_list[1].args[0][2],'install')
+            self.assertEqual((runtime/'native/ggml.dll').read_bytes(),b'library')
+            self.assertEqual(saved['native_binary'],str(runtime/'native/llama-server.exe'))
             check=invoke.call_args_list[-1].args[0]
             self.assertEqual(check[check.index('--key-file')+1],runtime/'api-key')
 

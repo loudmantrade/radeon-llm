@@ -45,8 +45,10 @@ jobs:
           "$($sdk.FullName)\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Build through setup
         run: python setup.py --backend ${{ matrix.backend }} --build-only
+      - name: Verify staged native installation
+        run: python server/smoke_install.py --backend ${{ matrix.backend }}
       - uses: actions/upload-artifact@v4
         with:
           name: setup-${{ matrix.name }}
-          path: llama.cpp/build-${{ matrix.backend }}/bin/**
+          path: llama.cpp/build-*/bin/**
           if-no-files-found: error

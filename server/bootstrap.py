@@ -64,9 +64,9 @@ def download():
     print('Downloaded and SHA-256 verified: ' + str(path))
 
 
-def build(backend='vulkan', jobs=6, env=None):
+def build(backend='vulkan', jobs=6, env=None, build_dir=None):
     target = source()
-    directory = target / ('build-' + backend)
+    directory = Path(build_dir) if build_dir is not None else target / ('build-' + backend)
     args = ['cmake', '-S', str(target), '-B', str(directory),
             '-DGGML_VULKAN=' + ('ON' if backend == 'vulkan' else 'OFF'),
             '-DGGML_METAL=' + ('ON' if backend == 'metal' else 'OFF'),
@@ -76,6 +76,7 @@ def build(backend='vulkan', jobs=6, env=None):
     subprocess.run(args, check=True, env=env)
     subprocess.run(['cmake', '--build', str(directory), '--config', 'Release', '--parallel', str(jobs),
                     '--target', 'llama-server'], check=True, env=env)
+    return directory
 
 
 def main():

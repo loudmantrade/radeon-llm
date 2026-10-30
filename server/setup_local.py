@@ -177,7 +177,7 @@ def configure_mac(backend, context=None):
         config = json.loads(previous.read_text(encoding='utf-8'))
     else:
         config = json.loads((ROOT / 'server/config.example.json').read_text(encoding='utf-8'))
-    if path.exists(): shutil.copy2(path, path.with_name('config.before-setup-%d.json' % time.time_ns()))
+    if previous.exists(): shutil.copy2(previous, path.with_name('config.before-setup-%d.json' % time.time_ns()))
     if context is not None: config['context'] = context
     config.update(backend=backend, native_binary='llama.cpp/build-%s/bin/llama-server' % backend,
                   python=getattr(sys, '_base_executable', sys.executable), amd_shared_fa=backend == 'vulkan')
@@ -190,7 +190,19 @@ def configure_mac(backend, context=None):
     return config
 
 
-def install(system, backend, context=None):
+def copy_windows_runtime(build_dir, runtime):
+    source = next((p for p in (build_dir / 'bin/Release', build_dir / 'bin')
+                   if (p / 'llama-server.exe').is_file()), None)
+    if source is None: raise RuntimeError('Built llama-server.exe not found in ' + str(build_dir))
+    target = runtime / 'native'
+    target.mkdir(exist_ok=True)
+    for path in source.iterdir():
+        if path.is_file() and (path.name == 'llama-server.exe' or path.suffix.lower() == '.dll'):
+            shutil.copy2(path, target / path.name)
+    return target / 'llama-server.exe'
+
+
+def install(system, backend, context=None, build_dir=None):
     if system == 'Darwin':
         config = configure_mac(backend, context)
         invoke([sys.executable, ROOT / 'server/daemon.py', 'install'])
@@ -202,11 +214,19 @@ def install(system, backend, context=None):
         shutil.copy2(runtime / 'config.json', runtime / ('config.before-setup-%d.json' % time.time_ns()))
         # A first install needs an absolute model path independent of launch cwd.
         model = Path(config['model'])
-        if not model.is_absolute(): config['model'] = str(ROOT / model)
-        config['native_binary'] = str(windows.binary_path({}, ROOT))
+        if not model.is_absolute(): model = ROOT / model
+        default_model = json.loads((ROOT / 'models/qwen3-source.json').read_text())['file']
+        if not model.exists() and model.name == default_model: model = ROOT / 'models' / default_model
+        if not model.is_file(): raise RuntimeError('Configured model is missing: ' + str(model))
+        config['model'] = str(model)
         if context is not None: config['context'] = context
+        python = getattr(sys, '_base_executable', None) or sys.executable
+        # Windows cannot relink/replace loaded EXE/DLL files. Build separately,
+        # then stop and copy to a private runtime directory before restarting.
+        invoke([python, ROOT / 'server/windows.py', 'stop', '--runtime', runtime])
+        config['native_binary'] = str(copy_windows_runtime(build_dir or ROOT / 'llama.cpp/build-setup-vulkan', runtime))
         private_json(runtime / 'config.json', config)
-        invoke([sys.executable, ROOT / 'server/windows.py', 'install', '--runtime', runtime])
+        invoke([python, ROOT / 'server/windows.py', 'install', '--runtime', runtime])
         key = runtime / 'api-key'
         windows.opencode_config(config, runtime)
     invoke([sys.executable, ROOT / 'server/check_api.py', '--port', str(config['port']),
@@ -238,11 +258,12 @@ def main():
     with FileLock(lock_dir / 'setup.lock'):
         dependencies(system, backend, opts.no_deps)
         if system == 'Darwin' and backend == 'vulkan': mac_vulkan(opts.no_deps)
-        bootstrap.build(backend, opts.jobs, env=dict(os.environ))
+        directory = ROOT / 'llama.cpp' / ('build-setup-vulkan' if system == 'Windows' else 'build-' + backend)
+        bootstrap.build(backend, opts.jobs, env=dict(os.environ), build_dir=directory)
         if opts.build_only:
             print('Build complete; model, configuration and services were not changed.'); return 0
         bootstrap.download()
-        install(system, backend, opts.context)
+        install(system, backend, opts.context, directory)
     print('Setup complete: source build, model verification, autostart and API/tool checks passed.', flush=True)
     return 0
 
