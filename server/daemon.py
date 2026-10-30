@@ -41,7 +41,7 @@ def prepare():
         (ROOT / "opencode.json").write_text(json.dumps(body, indent=2) + "\n")
     data = {
         "Label": LABEL,
-        "ProgramArguments": ["/usr/bin/python3", str(Path(__file__).resolve()), "run"],
+        "ProgramArguments": [CONFIG.get("python", sys.executable), str(Path(__file__).resolve()), "run"],
         "WorkingDirectory": str(ROOT),
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
@@ -58,10 +58,15 @@ def environment():
     env = os.environ.copy()
     sdk = ROOT / "vulkan-sdk/macOS"
     driver = ROOT / "moltenvk-1.4.2/MoltenVK/MoltenVK/dynamic/dylib/macOS"
-    env["VULKAN_SDK"] = str(sdk)
-    env["VK_DRIVER_FILES"] = str(driver / "MoltenVK_icd.json")
-    env["VK_ICD_FILENAMES"] = env["VK_DRIVER_FILES"]
-    env["DYLD_LIBRARY_PATH"] = ":".join([str(driver), str(sdk / "lib"), str(BIN.parent)])
+    if CONFIG.get("backend", "vulkan") == "vulkan":
+        env["VULKAN_SDK"] = str(sdk)
+        env["VK_DRIVER_FILES"] = str(driver / "MoltenVK_icd.json")
+        env["VK_ICD_FILENAMES"] = env["VK_DRIVER_FILES"]
+        env["DYLD_LIBRARY_PATH"] = ":".join([str(driver), str(sdk / "lib"), str(BIN.parent)])
+    else:
+        for key in ("VK_DRIVER_FILES", "VK_ICD_FILENAMES"):
+            env.pop(key, None)
+        env["DYLD_LIBRARY_PATH"] = str(BIN.parent)
     for key in list(env):
         if key.startswith("GGML_VK_") or key.startswith("LLAMA_ARG_"):
             del env[key]
@@ -80,12 +85,16 @@ def command(cpu=False, port=None, context=None, cache_dir=None):
     env = environment()
     device = "none"
     if not cpu:
-        print("Daemon: probing Radeon devices...", flush=True)
+        print("Daemon: probing GPU devices...", flush=True)
         result = subprocess.run([str(BIN), "--list-devices"], env=env,
                                 capture_output=True, text=True, timeout=90)
-        match = re.search(r"^\s*(Vulkan\d+):.*Radeon", result.stdout, re.M)
+        listing = result.stdout + result.stderr
+        if CONFIG.get("backend", "vulkan") == "metal":
+            match = re.search(r"^\s*(MTL\d+):", listing, re.M)
+        else:
+            match = re.search(r"^\s*(Vulkan\d+):.*Radeon", listing, re.M) or re.search(r"^\s*(Vulkan\d+):", listing, re.M)
         if result.returncode or not match:
-            raise RuntimeError("Radeon unavailable. Start from the macOS Terminal.\n" +
+            raise RuntimeError("GPU unavailable. Start from the macOS Terminal.\n" +
                                result.stdout + result.stderr)
         device = match.group(1)
     args = [str(BIN), "-m", str(ROOT / CONFIG["model"]),
@@ -202,10 +211,12 @@ def deploy(destination=RUNTIME):
              (BIN, destination / BIN.relative_to(ROOT))]
     pairs += [(p, destination / p.relative_to(ROOT)) for p in BIN.parent.glob("*.dylib")]
     sdk_lib = ROOT / "vulkan-sdk/macOS/lib"
-    pairs += [(p, destination / p.relative_to(ROOT)) for p in sdk_lib.glob("libvulkan*.dylib")]
+    if CONFIG.get("backend", "vulkan") == "vulkan":
+        pairs += [(p, destination / p.relative_to(ROOT)) for p in sdk_lib.glob("libvulkan*.dylib")]
     driver = ROOT / "moltenvk-1.4.2/MoltenVK/MoltenVK/dynamic/dylib/macOS"
-    pairs += [(driver / name, destination / (driver / name).relative_to(ROOT))
-              for name in ["libMoltenVK.dylib", "MoltenVK_icd.json"]]
+    if CONFIG.get("backend", "vulkan") == "vulkan":
+        pairs += [(driver / name, destination / (driver / name).relative_to(ROOT))
+                  for name in ["libMoltenVK.dylib", "MoltenVK_icd.json"]]
     for source, target in pairs:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.is_symlink():
@@ -224,12 +235,18 @@ def deploy(destination=RUNTIME):
     for path in native:
         listing = subprocess.check_output(["/usr/bin/otool", "-l", str(path)], text=True)
         rpaths = re.findall(r"cmd LC_RPATH\n\s*cmdsize \d+\n\s*path (.*?) \(offset", listing)
+        changed = False
         for rpath in rpaths:
             if str(ROOT) in rpath or "/Documents/" in rpath:
                 subprocess.run(["/usr/bin/install_name_tool", "-delete_rpath", rpath, str(path)], check=True)
+                changed = True
         if "@loader_path" not in rpaths:
             subprocess.run(["/usr/bin/install_name_tool", "-add_rpath", "@loader_path", str(path)], check=True)
-    subprocess.run(["/usr/bin/python3", str(destination / "server/daemon.py"), "prepare"], check=True)
+            changed = True
+        if changed:
+            # install_name_tool invalidates the linker's ad-hoc signature on arm64.
+            subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(path)], check=True)
+    subprocess.run([CONFIG.get("python", sys.executable), str(destination / "server/daemon.py"), "prepare"], check=True)
     return destination / "server" / PLIST.name
 
 
@@ -348,7 +365,7 @@ def main():
         # Deliberately preserve installed model, native libraries and driver.
         for name in ["daemon.py", "slot_cache.py", "cache_index.py", "tiered_cache.py", "cache_proxy.py", "platform_support.py", "config.json"]:
             shutil.copy2(ROOT / "server" / name, RUNTIME / "server" / name)
-        subprocess.run(["/usr/bin/python3", str(RUNTIME / "server/daemon.py"), "prepare"], check=True)
+        subprocess.run([CONFIG.get("python", sys.executable), str(RUNTIME / "server/daemon.py"), "prepare"], check=True)
         shutil.copyfile(RUNTIME / "server" / PLIST.name, INSTALLED)
         print("Updated service scripts; installed native runtime preserved", flush=True)
         start()

@@ -18,11 +18,19 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m unittest discover -s server/tests -v
+      - run: python setup.py --plan
+      - name: Validate macOS launcher
+        if: runner.os == 'macOS'
+        run: bash -n setup.command
       - name: Parse PowerShell launcher
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $parseErrors = $null
           $tokens = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("$pwd/windows.ps1", [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count -gt 0) { $parseErrors | Format-List; exit 1 }
+          foreach ($script in @('windows.ps1','setup.ps1')) {
+            [System.Management.Automation.Language.Parser]::ParseFile("$pwd/$script", [ref]$tokens, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count -gt 0) { $parseErrors | Format-List; exit 1 }
+          }
+          & ./setup.ps1 --plan --context 8192
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

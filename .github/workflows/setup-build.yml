@@ -1,0 +1,52 @@
+name: Setup source builds
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'setup.*'
+      - 'server/setup_local.py'
+      - 'server/bootstrap.py'
+      - 'patches/**'
+      - '.github/workflows/setup-build.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            backend: vulkan
+            name: Windows-Vulkan
+          - os: macos-latest
+            backend: metal
+            name: macOS-Metal
+          - os: macos-latest
+            backend: vulkan
+            name: macOS-Vulkan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Windows Vulkan SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install vulkan-sdk --yes --no-progress --limit-output
+          if ($LASTEXITCODE -notin @(0, 1641, 3010)) { exit $LASTEXITCODE }
+          $sdk = Get-ChildItem C:\VulkanSDK -Directory | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          "VULKAN_SDK=$($sdk.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$($sdk.FullName)\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build through setup
+        run: python setup.py --backend ${{ matrix.backend }} --build-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-${{ matrix.name }}
+          path: llama.cpp/build-${{ matrix.backend }}/bin/**
+          if-no-files-found: error

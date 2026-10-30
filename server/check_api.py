@@ -9,10 +9,12 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=8080)
+parser.add_argument("--key-file", type=Path, default=ROOT / "server/api-key")
+parser.add_argument("--model", default="qwen3-4b-local")
 opts = parser.parse_args()
 BASE = "http://127.0.0.1:%d" % opts.port
-TOKEN = (ROOT / "server/api-key").read_text().strip()
-MODEL = "qwen3-4b-local"
+TOKEN = opts.key_file.read_text().strip()
+MODEL = opts.model
 
 
 def request(path, payload=None, auth=True):

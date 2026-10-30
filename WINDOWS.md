@@ -1,5 +1,8 @@
 # Windows + Vulkan
 
+Автоматическая сборка и установка: `.\setup.ps1` или `python setup.py`.
+[Инструкция setup](SETUP.md). Команды ниже остаются доступны для ручного управления.
+
 Поддерживается Windows 10/11 x64 с Python 3.11+, Git, CMake, Visual Studio 2022
 Build Tools (Desktop development with C++) и Vulkan SDK от LunarG.
 Нужен актуальный драйвер видеокарты с Vulkan. MoltenVK на Windows не используется.

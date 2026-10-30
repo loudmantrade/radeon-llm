@@ -14,7 +14,9 @@ COMMIT = '2280f0fd163b03d4331d49e08460f66502e35854'
 def source():
     target = ROOT / 'llama.cpp'
     if not target.exists():
-        subprocess.run(['git', 'clone', '--no-checkout', 'https://github.com/ggml-org/llama.cpp.git', str(target)], check=True)
+        subprocess.run(['git', '-c', 'core.autocrlf=false', 'clone', '--no-checkout',
+                        'https://github.com/ggml-org/llama.cpp.git', str(target)], check=True)
+        subprocess.run(['git', 'config', 'core.autocrlf', 'false'], cwd=target, check=True)
         subprocess.run(['git', 'checkout', '--detach', COMMIT], cwd=target, check=True)
     head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=target, text=True).strip()
     if head != COMMIT:
@@ -62,19 +64,30 @@ def download():
     print('Downloaded and SHA-256 verified: ' + str(path))
 
 
+def build(backend='vulkan', jobs=6, env=None):
+    target = source()
+    directory = target / ('build-' + backend)
+    args = ['cmake', '-S', str(target), '-B', str(directory),
+            '-DGGML_VULKAN=' + ('ON' if backend == 'vulkan' else 'OFF'),
+            '-DGGML_METAL=' + ('ON' if backend == 'metal' else 'OFF'),
+            '-DLLAMA_BUILD_SERVER=ON', '-DLLAMA_BUILD_UI=OFF',
+            '-DLLAMA_BUILD_APP=OFF', '-DCMAKE_BUILD_TYPE=Release']
+    if backend == 'metal': args.append('-DGGML_METAL_EMBED_LIBRARY=ON')
+    subprocess.run(args, check=True, env=env)
+    subprocess.run(['cmake', '--build', str(directory), '--config', 'Release', '--parallel', str(jobs),
+                    '--target', 'llama-server'], check=True, env=env)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['source', 'build', 'download-model'])
+    parser.add_argument('--backend', choices=['vulkan', 'metal'], default='vulkan')
+    parser.add_argument('--jobs', type=int, default=6)
     opts = parser.parse_args()
     if opts.action == 'download-model': download(); return
-    target = source()
     if opts.action == 'build':
-        build = target / 'build-vulkan'
-        subprocess.run(['cmake', '-S', str(target), '-B', str(build), '-DGGML_VULKAN=ON',
-                        '-DGGML_METAL=OFF', '-DLLAMA_BUILD_SERVER=ON', '-DLLAMA_BUILD_UI=OFF',
-                        '-DLLAMA_BUILD_APP=OFF', '-DCMAKE_BUILD_TYPE=Release'], check=True)
-        subprocess.run(['cmake', '--build', str(build), '--config', 'Release', '--parallel', '6',
-                        '--target', 'llama-server'], check=True)
+        build(opts.backend, opts.jobs)
+    else: source()
 
 
 if __name__ == '__main__': main()

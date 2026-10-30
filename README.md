@@ -6,6 +6,11 @@ Pro 560X 4 GB; добавлен отдельный Windows launcher для на�
 
 ## Windows
 
+Для сборки и установки на текущей машине используйте `./setup.command` на macOS
+или `.\setup.ps1` на Windows. Если Python уже установлен: `python setup.py`.
+Setup собирает исходники, проверяет модель, устанавливает автозапуск и проверяет
+API. [Установка одной командой и параметры](SETUP.md).
+
 Нужны Python 3.11+, Git, CMake, Visual Studio 2022 C++ Build Tools, Vulkan SDK и
 драйвер видеокарты с Vulkan. Выполняйте сборку из Developer PowerShell for VS 2022:
 
@@ -64,14 +69,11 @@ Python-прокси последовательно обслуживает оди
 
 ## macOS
 
-Исходные `.command`-скрипты и macOS LaunchAgent сохранены. Они рассчитаны на Intel
-Mac и локальные каталоги Vulkan SDK/MoltenVK из исходного эксперимента;
-`bootstrap.py build` не устанавливает эти зависимости автоматически.
-На чистой системе сначала подготовьте SDK и MoltenVK по
-[журналу macOS-эксперимента](MACOS-LAB.md), затем соберите исходники.
-`daemon.command prepare` создаёт локальные конфиги из примеров; после подготовки
-драйвера, модели и бинарной сборки доступны `run` и `install`.
-Процесс установки macOS отдельно описан в [SERVER.md](SERVER.md).
+`./setup.command` выбирает Vulkan/MoltenVK на Intel и Metal на Apple Silicon,
+собирает движок и устанавливает LaunchAgent. Для Intel скачиваются проверенные
+SDK/MoltenVK; для Metal они не нужны. [Новая инструкция setup](SETUP.md).
+Исходные экспериментальные `.command`-скрипты и
+[журнал Intel macOS](MACOS-LAB.md) сохранены отдельно.
 
 ## Проверки
 

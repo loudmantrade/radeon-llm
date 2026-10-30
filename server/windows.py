@@ -272,7 +272,9 @@ def main():
                 script = 'warm_opencode.py'
                 common += [str(opts.project.resolve()), '--config', str(opencode_config(config, runtime)),
                            '--cache-dir', str(runtime / 'cache/kv')]
-            else: script = 'check_api.py'
+            else:
+                script = 'check_api.py'
+                common += ['--model', config['alias']]
             return subprocess.call([sys.executable, str(ROOT / 'server' / script)] + common + extra)
     return 0
 
