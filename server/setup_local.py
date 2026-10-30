@@ -43,7 +43,10 @@ def download_verified(url, sha, destination):
     if destination.exists() and bootstrap.sha256(destination) == sha: return destination
     temporary = destination.with_suffix(destination.suffix + '.part')
     print('Downloading verified dependency: ' + url, flush=True)
-    with urllib.request.urlopen(url, timeout=120) as response, temporary.open('wb') as stream:
+    # LunarG rejects Python's default User-Agent. Identify this unattended client.
+    request = urllib.request.Request(url, headers={'User-Agent': 'radeon-llm-setup/1.0',
+                                                  'Accept': 'application/octet-stream'})
+    with urllib.request.urlopen(request, timeout=120) as response, temporary.open('wb') as stream:
         shutil.copyfileobj(response, stream, length=4 * 2**20)
     if bootstrap.sha256(temporary) != sha:
         raise RuntimeError('Dependency SHA-256 mismatch: ' + str(temporary))

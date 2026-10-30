@@ -59,8 +59,9 @@ class SetupTests(unittest.TestCase):
         content=b'verified dependency';digest=hashlib.sha256(content).hexdigest()
         with tempfile.TemporaryDirectory() as name:
             destination=Path(name)/'dependency.zip'
-            with patch.object(setup.urllib.request, 'urlopen', return_value=io.BytesIO(content)):
+            with patch.object(setup.urllib.request, 'urlopen', return_value=io.BytesIO(content)) as open_url:
                 setup.download_verified('https://vendor.invalid/dependency.zip', digest, destination)
+                self.assertEqual(open_url.call_args.args[0].get_header('User-agent'),'radeon-llm-setup/1.0')
             with patch.object(setup.urllib.request, 'urlopen', side_effect=AssertionError('Must not download again')):
                 self.assertEqual(setup.download_verified('https://vendor.invalid/dependency.zip', digest, destination), destination)
             with patch.object(setup.urllib.request, 'urlopen', return_value=io.BytesIO(b'corrupt')):
